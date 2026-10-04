@@ -222,6 +222,23 @@ jobs:
       - name: Inventory after build
         run: python tools/check_prebuilt_libs.py --allow-missing
 
+      # The shell driver writes dist/<target>.txt for the collect job; the MSVC path
+      # is a batch file, so the manifest is written here instead.
+      - name: Write the manifest the collect job reads
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="${{ matrix.arch }}"
+          if [ "$arch" = "x86" ]; then
+            file="lua51-x86.lib"; bits="x86"
+          else
+            file="lua51-x86_64.lib"; bits="x86_64"
+          fi
+          mkdir -p dist
+          printf 'target=windows-%s\nfile=project/luajit/lib/Windows/%s\narch=%s\n' \
+            "$arch" "$file" "$bits" > "dist/windows-$arch.txt"
+          cat "dist/windows-$arch.txt"
+
       - uses: actions/upload-artifact@v4
         with:
           name: luajit-windows-${{ matrix.arch }}
@@ -244,13 +261,48 @@ jobs:
         with:
           path: incoming
 
-      - name: Merge every artifact into the checkout
+      - name: Merge each target's own archive
         run: |
           set -euo pipefail
-          for d in incoming/*/; do
-            if [ -d "$d/project/luajit/lib" ]; then cp -r "$d/project/luajit/lib/." project/luajit/lib/; fi
-            if [ -d "$d/dist" ]; then mkdir -p dist && cp -r "$d/dist/." dist/; fi
+          # Copying whole project/luajit/lib trees made the last artifact win for every
+          # single file, so a freshly built archive was silently overwritten by a stale
+          # copy that an unrelated job happened to carry along. Each job ships a
+          # manifest naming the one file it built and the hash it produced, so copy
+          # exactly that file and then prove the copy still matches.
+          merged=0
+          for m in incoming/*/dist/*.txt; do
+            [ -f "$m" ] || continue
+            target="$(basename "$m" .txt)"
+            rel="$(sed -n 's|^file=||p' "$m" | head -n1)"
+            want="$(sed -n 's|^sha256=||p' "$m" | head -n1)"
+            if [ -z "$rel" ]; then
+              echo "::error::$target: manifest has no file= line"
+              exit 1
+            fi
+            src="$(dirname "$m")/../$rel"
+            if [ ! -f "$src" ]; then
+              echo "::error::$target: the artifact does not contain $rel"
+              exit 1
+            fi
+            mkdir -p "$(dirname "$rel")"
+            cp "$src" "$rel"
+            if [ -n "$want" ]; then
+              got="$(sha256sum "$rel" | cut -d' ' -f1)"
+              if [ "$got" != "$want" ]; then
+                echo "::error::$target: $rel hashes $got but the build recorded $want"
+                exit 1
+              fi
+            fi
+            echo "merged $target -> $rel"
+            merged=$((merged + 1))
           done
+          if [ "$merged" -eq 0 ]; then
+            echo "::error::no target manifests found under incoming/"
+            exit 1
+          fi
+          mkdir -p dist
+          cp incoming/*/dist/*.txt dist/ 2>/dev/null || true
+          echo "$merged archives merged"
           ls -lR project/luajit/lib | head -n 60
 
       # Prunes any allowlist entry the build just satisfied, then checks. Without
