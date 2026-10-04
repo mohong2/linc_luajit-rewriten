@@ -235,8 +235,14 @@ jobs:
             file="lua51-x86_64.lib"; bits="x86_64"
           fi
           mkdir -p dist
-          printf 'target=windows-%s\nfile=project/luajit/lib/Windows/%s\narch=%s\n' \
-            "$arch" "$file" "$bits" > "dist/windows-$arch.txt"
+          manifest="project/luajit/lib/Windows/$file"
+          {
+            printf 'target=windows-%s\n' "$arch"
+            printf 'file=%s\n' "$manifest"
+            printf 'arch=%s\n' "$bits"
+            # Without this the collect job can only copy the file, not check it.
+            printf 'sha256=%s\n' "$(sha256sum "$manifest" | cut -d' ' -f1)"
+          } > "dist/windows-$arch.txt"
           cat "dist/windows-$arch.txt"
 
       - uses: actions/upload-artifact@v4
