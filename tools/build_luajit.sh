@@ -167,13 +167,10 @@ b_linux_cross() {
     # architecture probe, which surfaced as "Unsupported target architecture".
     prefix="${LINUX_ARMV7_CC:-arm-linux-gnueabihf-}"
     flags="${LINUX_ARMV7_FLAGS:-}"
-    # A 32-bit host compiler is not needed. HOST_ACFLAGS already carries
-    # -DLUAJIT_TARGET=LUAJIT_ARCH_arm, so buildvm targets ARM correctly even as a
-    # 64-bit host binary. Insisting on "gcc -m32" also dragged gcc-multilib into the
-    # same job as the armhf cross toolchain, and that pair cannot be installed
-    # together: the second install removes the first, after which -m32 cannot find
-    # asm/errno.h and the host build dies.
-    hostbits=64
+    # A 32-bit host compiler is mandatory: buildvm compares its own pointer size
+    # against the target's and refuses to run with "pointer size mismatch in
+    # cross-build. Try: make HOST_CC=\"gcc -m32\" CROSS=...".
+    hostbits=32
     ;;
   *) die "b_linux_cross called for $1" ;;
   esac

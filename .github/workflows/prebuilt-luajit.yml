@@ -96,9 +96,8 @@ jobs:
           - target: linux-arm64
             packages: "gcc-aarch64-linux-gnu"
           - target: linux-armv7
-            # No gcc-multilib here: it and the armhf cross toolchain replace each
-            # other, and this target builds its host tools 64-bit.
-            packages: "gcc-arm-linux-gnueabihf"
+            # @MULTILIB@ instead of gcc-multilib, see the install step.
+            packages: "@MULTILIB@ gcc-arm-linux-gnueabihf"
           - target: mingw-x64
             packages: "gcc-mingw-w64-x86-64"
           - target: mingw-x86
@@ -118,7 +117,13 @@ jobs:
         run: |
           set -ux
           sudo apt-get update -qq
-          for pkg in ${{ matrix.packages }}; do
+          # linux-libc-dev-armhf-cross declares a conflict against the gcc-multilib
+          # metapackage, so a target that needs both a 32-bit host compiler and the
+          # armhf cross toolchain cannot install gcc-multilib at all. The pieces that
+          # metapackage merely aggregates coexist fine, so expand it by hand.
+          packages="${{ matrix.packages }}"
+          packages="${packages//@MULTILIB@/gcc-$(gcc -dumpversion | cut -d. -f1)-multilib libc6-dev-i386}"
+          for pkg in $packages; do
             # One at a time: apt reports which package is unsatisfiable, and a
             # sequential install usually resolves what a combined one will not.
             # Recommends stay on: gcc-<ver>-<triple> only *recommends*
@@ -139,7 +144,9 @@ jobs:
         run: bash tools/build_luajit.sh ${{ matrix.target }}
 
       - name: Inventory after build
-        run: python3 tools/check_prebuilt_libs.py --allow-missing
+        # json: right after building, an allowlisted file legitimately exists in this
+        # workspace, which the text report would flag as a stale entry.
+        run: python3 tools/check_prebuilt_libs.py --json --allow-missing
 
       - uses: actions/upload-artifact@v4
         with:
@@ -176,7 +183,9 @@ jobs:
         run: bash tools/build_luajit.sh ${{ matrix.target }}
 
       - name: Inventory after build
-        run: python3 tools/check_prebuilt_libs.py --allow-missing
+        # json: right after building, an allowlisted file legitimately exists in this
+        # workspace, which the text report would flag as a stale entry.
+        run: python3 tools/check_prebuilt_libs.py --json --allow-missing
 
       - uses: actions/upload-artifact@v4
         with:
