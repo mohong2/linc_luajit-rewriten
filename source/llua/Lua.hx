@@ -277,7 +277,7 @@ extern class Lua {
 	static function newtable(l:State):Void;
 
 	static inline function register(l:State, name:String, f:Dynamic):Void
-		if (Type.typeof(f) == Type.ValueType.TFunction && !Lua_helper.callbacks.exists(name))
+		if (Type.typeof(f) == Type.ValueType.TFunction && !Lua_helper.has_callback(l, name))
 			Lua_helper.add_callback(l, name, f);
 
 	@:native('linc::lua::pushcfunction')
@@ -372,16 +372,83 @@ extern class Lua {
 }
 
 class Lua_helper {
+	/**
+	 * Legacy global name -> function table.
+	 *
+	 * It used to be the ONE dispatch table, so with several Lua states alive (this
+	 * engine runs one state per mod script) the last state that registered a name won:
+	 * script A calling `close()` ran script B's closure, and `remove_callback` on one
+	 * state silently killed the name for every other state.
+	 *
+	 * Dispatch is now per state (see `byState`); this map is still kept in sync and is
+	 * still consulted as a fallback, because code outside this class (e.g. the engine's
+	 * hscript LuaApi) reads/writes it directly.
+	 */
 	public static var callbacks:Map<String, Dynamic> = new Map();
 	public static var sendErrorsToLua:Bool = true;
 
-	public static inline function add_callback(l:State, fname:String, f:Dynamic):Bool {
-		callbacks.set(fname, f);
+	/** Registry key under which each state stores its own dispatch id. */
+	static inline var STATE_ID_KEY:String = '__linc_luajit_state_id__';
+
+	/** state id -> (callback name -> Haxe function) */
+	static var byState:Map<Int, Map<String, Dynamic>> = new Map();
+	static var nextStateId:Int = 1;
+
+	/**
+	 * Id of `l`'s dispatch table. Stored *inside* the Lua state (registry), so it is
+	 * shared with that state's coroutines and cannot be confused with another state.
+	 */
+	static function stateId(l:State, create:Bool):Int {
+		if (l == null)
+			return 0;
+		Lua.getfield(l, Lua.LUA_REGISTRYINDEX, STATE_ID_KEY);
+		var id:Int = 0;
+		if (Lua.isnumber(l, -1))
+			id = Lua.tointeger(l, -1);
+		Lua.pop(l, 1);
+		if (id == 0 && create) {
+			id = nextStateId++;
+			byState.set(id, new Map<String, Dynamic>());
+			Lua.pushinteger(l, id);
+			Lua.setfield(l, Lua.LUA_REGISTRYINDEX, STATE_ID_KEY);
+		}
+		return id;
+	}
+
+	static function tableOf(l:State):Map<String, Dynamic> {
+		var id = stateId(l, true);
+		var t = byState.get(id);
+		if (t == null) {
+			t = new Map<String, Dynamic>();
+			byState.set(id, t);
+		}
+		return t;
+	}
+
+	/** True when `l` itself has a callback registered under `fname`. */
+	public static function has_callback(l:State, fname:String):Bool {
+		var t = byState.get(stateId(l, false));
+		return t != null && t.exists(fname);
+	}
+
+	/** Drop `l`'s dispatch table. Call this before closing a state. */
+	public static function forget_state(l:State):Void {
+		var id = stateId(l, false);
+		if (id != 0)
+			byState.remove(id);
+	}
+
+	public static function add_callback(l:State, fname:String, f:Dynamic):Bool {
+		tableOf(l).set(fname, f);
+		callbacks.set(fname, f); // legacy view for external readers
 		Lua.add_callback_function(l, fname);
 		return true;
 	}
 
-	public static inline function remove_callback(l:State, fname:String):Bool {
+	public static function remove_callback(l:State, fname:String):Bool {
+		var t = byState.get(stateId(l, false));
+		if (t != null)
+			t.remove(fname);
 		callbacks.remove(fname);
 		Lua.remove_callback_function(l, fname);
 		return true;
@@ -389,7 +456,11 @@ class Lua_helper {
 
 	public static inline function callback_handler(l:State, fname:String):Int {
 		try {
-			var cbf = callbacks.get(fname);
+			var t = byState.get(stateId(l, false));
+			var cbf:Dynamic = t != null ? t.get(fname) : null;
+
+			if (cbf == null)
+				cbf = callbacks.get(fname); // callbacks registered outside add_callback
 
 			if (cbf == null)
 				return 0;
