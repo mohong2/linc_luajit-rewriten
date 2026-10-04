@@ -104,7 +104,7 @@ USAGE
 # objects, both slices come out as the same architecture, and lipo refuses them. So
 # remove the products directly and prove they are gone.
 clean_tree() {
-  clean_tree
+  make -C "$SRC" clean >/dev/null 2>&1 || true
   rm -rf "$SRC"/src/*.o "$SRC"/src/*.a "$SRC"/src/*.so "$SRC"/src/*.d \
          "$SRC"/src/luajit "$SRC"/src/host/*.o "$SRC"/src/host/*.d "$SRC"/src/host/buildvm
   if [ -e "$SRC/src/luajit" ] || ls "$SRC"/src/*.o >/dev/null 2>&1; then
