@@ -160,7 +160,15 @@ b_linux_cross() {
   local prefix flags hostbits=64
   case "$1" in
   linux-arm64) prefix="${LINUX_ARM64_CC:-aarch64-linux-gnu-}" ;;
-  linux-armv7) prefix="${LINUX_ARMV7_CC:-arm-linux-gnueabihf-}"; flags="-march=armv7-a -mfloat-abi=hard"; hostbits=32 ;;
+  linux-armv7)
+    # arm-linux-gnueabihf- already defaults to armv7-a with a hard-float ABI.
+    # Adding "-march=armv7-a -mfloat-abi=hard" here made the compiler say
+    # "-mfloat-abi=hard: selected architecture lacks an FPU" during LuaJIT's own
+    # architecture probe, which surfaced as "Unsupported target architecture".
+    prefix="${LINUX_ARMV7_CC:-arm-linux-gnueabihf-}"
+    flags="${LINUX_ARMV7_FLAGS:-}"
+    hostbits=32
+    ;;
   *) die "b_linux_cross called for $1" ;;
   esac
   command -v "${prefix}gcc" >/dev/null 2>&1 || die "cross compiler not found: ${prefix}gcc"

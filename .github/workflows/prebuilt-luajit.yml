@@ -119,7 +119,11 @@ jobs:
           for pkg in ${{ matrix.packages }}; do
             # One at a time: apt reports which package is unsatisfiable, and a
             # sequential install usually resolves what a combined one will not.
-            sudo apt-get install -y --no-install-recommends "$pkg"
+            # Recommends stay on: gcc-<ver>-<triple> only *recommends*
+            # libc6-dev-<arch>-cross, and without it the cross compiler silently
+            # falls back to the host's /usr/include and dies on
+            # bits/libc-header-start.h.
+            sudo apt-get install -y "$pkg"
           done
 
       - name: Install Android NDK ${{ env.NDK_VERSION }}
