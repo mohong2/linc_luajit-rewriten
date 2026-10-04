@@ -21,10 +21,11 @@
 # sibling on Windows), which writes straight to the path Build.xml links and then
 # refuses to report success unless the artifact really carries the target CPU.
 #
-# The two selections that are genuinely missing today are
-#   project/luajit/lib/Windows/lua51-x86.lib   (target windows-x86)
-#   project/luajit/lib/MinGW/libluajit-x86.a   (target mingw-x86)
-# and both are in the dispatch matrix below.
+# The only selection that is neither present nor buildable here is
+#   project/luajit/lib/Linux/libluajit-armv7.a
+# The file ships, so the gate is happy, but the dispatch matrix cannot rebuild it -
+# see the note in build-posix. Everything else in Build.xml is either reproducible
+# below or allowlisted in project/known-missing-libs.txt with a reason.
 
 name: Prebuilt LuaJIT
 
@@ -95,9 +96,18 @@ jobs:
             packages: "gcc-multilib"
           - target: linux-arm64
             packages: "gcc-aarch64-linux-gnu"
-          - target: linux-armv7
-            # @MULTILIB@ instead of gcc-multilib, see the install step.
-            packages: "@MULTILIB@ gcc-arm-linux-gnueabihf"
+          # linux-armv7 is deliberately absent. A 32-bit ARM target needs BOTH the
+          # armhf cross toolchain and a 32-bit host compiler, and on Ubuntu those
+          # cannot coexist: linux-libc-dev-armhf-cross declares a conflict against
+          # gcc-multilib, and gcc-<ver>-multilib pulls gcc-multilib back in, so apt
+          # always ends up removing it ("The following packages will be REMOVED:
+          # gcc-multilib") no matter how the install is ordered or split. Without it
+          # "gcc -m32" cannot find asm/errno.h, and dropping the 32-bit host compiler
+          # is not an option either - buildvm stops with "pointer size mismatch in
+          # cross-build. Try: make HOST_CC=gcc -m32 CROSS=...". Building this target
+          # needs a container or an out-of-apt toolchain; for now the shipped
+          # project/luajit/lib/Linux/libluajit-armv7.a is kept as-is and the gate is
+          # satisfied by its presence. Everything else in this matrix is reproducible.
           - target: mingw-x64
             packages: "gcc-mingw-w64-x86-64"
           - target: mingw-x86
@@ -117,13 +127,7 @@ jobs:
         run: |
           set -ux
           sudo apt-get update -qq
-          # linux-libc-dev-armhf-cross declares a conflict against the gcc-multilib
-          # metapackage, so a target that needs both a 32-bit host compiler and the
-          # armhf cross toolchain cannot install gcc-multilib at all. The pieces that
-          # metapackage merely aggregates coexist fine, so expand it by hand.
-          packages="${{ matrix.packages }}"
-          packages="${packages//@MULTILIB@/gcc-$(gcc -dumpversion | cut -d. -f1)-multilib libc6-dev-i386}"
-          for pkg in $packages; do
+          for pkg in ${{ matrix.packages }}; do
             # One at a time: apt reports which package is unsatisfiable, and a
             # sequential install usually resolves what a combined one will not.
             # Recommends stay on: gcc-<ver>-<triple> only *recommends*
