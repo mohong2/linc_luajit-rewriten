@@ -84,28 +84,43 @@ jobs:
     timeout-minutes: 90
     strategy:
       fail-fast: false
+      # Only the toolchain a target actually needs is installed. Asking for all of
+      # them in every job made apt give up with "held broken packages", which took
+      # the whole matrix down before a single compile started.
       matrix:
-        target:
-          - mingw-x86
-          - mingw-x64
-          - linux-x86
-          - linux-x64
-          - linux-armv7
-          - linux-arm64
-          - android-armv7
-          - android-arm64
-          - android-x86
-          - android-x86_64
+        include:
+          - target: linux-x64
+            packages: ""
+          - target: linux-x86
+            packages: "gcc-multilib"
+          - target: linux-arm64
+            packages: "gcc-aarch64-linux-gnu"
+          - target: linux-armv7
+            packages: "gcc-multilib gcc-arm-linux-gnueabihf"
+          - target: mingw-x64
+            packages: "gcc-mingw-w64-x86-64"
+          - target: mingw-x86
+            packages: "gcc-multilib gcc-mingw-w64-i686"
+          - target: android-arm64
+            packages: ""
+          - target: android-armv7
+            packages: "gcc-multilib"
+          - target: android-x86
+            packages: "gcc-multilib"
+          - target: android-x86_64
+            packages: ""
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install cross toolchains
+      - name: Install the toolchains this target needs
         run: |
+          set -ux
           sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            gcc-multilib \
-            gcc-mingw-w64-i686 gcc-mingw-w64-x86-64 \
-            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+          for pkg in ${{ matrix.packages }}; do
+            # One at a time: apt reports which package is unsatisfiable, and a
+            # sequential install usually resolves what a combined one will not.
+            sudo apt-get install -y --no-install-recommends "$pkg"
+          done
 
       - name: Install Android NDK ${{ env.NDK_VERSION }}
         if: startsWith(matrix.target, 'android-')
@@ -237,6 +252,7 @@ jobs:
           name: luajit-prebuilts
           path: |
             project/luajit/lib
+            project/known-missing-libs.txt
             dist
           if-no-files-found: error
           retention-days: 30

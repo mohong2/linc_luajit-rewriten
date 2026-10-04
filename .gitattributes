@@ -4,6 +4,7 @@
 *.sh          text eol=lf
 *.py          text eol=lf
 *.yml         text eol=lf
+*.gitattributes text eol=lf
 *.hx          text eol=lf
 *.md          text eol=lf
 *.txt         text eol=lf

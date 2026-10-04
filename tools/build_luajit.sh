@@ -99,6 +99,19 @@ usage: tools/build_luajit.sh [--list | --check [--allow-missing] | <target> ...]
 USAGE
 }
 
+# LuaJIT's own "clean" target silently did nothing on the Apple runners. That is not
+# cosmetic: the second slice of a universal build then reuses the first slice's
+# objects, both slices come out as the same architecture, and lipo refuses them. So
+# remove the products directly and prove they are gone.
+clean_tree() {
+  clean_tree
+  rm -rf "$SRC"/src/*.o "$SRC"/src/*.a "$SRC"/src/*.so "$SRC"/src/*.d \
+         "$SRC"/src/luajit "$SRC"/src/host/*.o "$SRC"/src/host/*.d "$SRC"/src/host/buildvm
+  if [ -e "$SRC/src/luajit" ] || ls "$SRC"/src/*.o >/dev/null 2>&1; then
+    die "could not clean $SRC/src; the next slice would silently reuse these objects"
+  fi
+}
+
 # LuaJIT's own buildvm must be compiled with the pointer width of the target, or the
 # generated interpreter does not match and the library faults at run time.
 need_host_cc_bits() {
@@ -117,7 +130,7 @@ fetch() {
   fi
   git -C "$SRC" fetch --quiet origin
   git -C "$SRC" checkout --quiet "$REF"
-  make -C "$SRC" clean >/dev/null 2>&1 || true
+  clean_tree
 }
 
 android_toolchain_bin() {
@@ -224,7 +237,7 @@ b_macos() {
   MACOSX_DEPLOYMENT_TARGET="$x86_min" make -C "$SRC" -j"$JOBS" TARGET_FLAGS="-arch x86_64" BUILDMODE=static
   cp "$SRC/src/libluajit.a" "$TMP/macos-x86_64.a"
   say "macOS arm64 slice (deployment target $arm_min)"
-  make -C "$SRC" clean >/dev/null 2>&1 || true
+  clean_tree
   MACOSX_DEPLOYMENT_TARGET="$arm_min" make -C "$SRC" -j"$JOBS" TARGET_FLAGS="-arch arm64" BUILDMODE=static
   cp "$SRC/src/libluajit.a" "$TMP/macos-arm64.a"
   # Build.xml points both HXCPP_M64 and HXCPP_ARM64 at MacOS/libluajit-64.a, so the
@@ -252,7 +265,7 @@ b_ios() {
   local arch
   for arch in x86_64 arm64; do
     say "iOS simulator $arch (minimum ${IOS_SIM_MIN:-13.0})"
-    make -C "$SRC" clean >/dev/null 2>&1 || true
+    clean_tree
     make -C "$SRC" -j"$JOBS" CC=clang CROSS="$cc_dir/" TARGET_SYS=iOS \
       TARGET_FLAGS="-arch $arch -isysroot $sim_sdk -mios-simulator-version-min=${IOS_SIM_MIN:-13.0}" \
       BUILDMODE=static
