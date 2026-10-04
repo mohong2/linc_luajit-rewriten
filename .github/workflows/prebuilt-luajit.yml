@@ -96,7 +96,9 @@ jobs:
           - target: linux-arm64
             packages: "gcc-aarch64-linux-gnu"
           - target: linux-armv7
-            packages: "gcc-multilib gcc-arm-linux-gnueabihf"
+            # No gcc-multilib here: it and the armhf cross toolchain replace each
+            # other, and this target builds its host tools 64-bit.
+            packages: "gcc-arm-linux-gnueabihf"
           - target: mingw-x64
             packages: "gcc-mingw-w64-x86-64"
           - target: mingw-x86
