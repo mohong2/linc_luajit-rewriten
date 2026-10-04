@@ -1,1 +1,3 @@
 examples/*/bin
+.luajit-src/
+dist/

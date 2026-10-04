@@ -1,0 +1,242 @@
+# Prebuilt LuaJIT static libraries.
+#
+# Why this workflow lives here and not in the engine repo: the prebuilt .a / .lib
+# files are part of THIS haxelib, and hmm.json pulls it straight from
+# https://github.com/mohong2/linc_luajit-rewriten - the engine never sees them.
+#
+# What runs when
+#   push / pull_request : only the gate. It is strict: any <lib> selection in
+#                         project/Build.xml that has no file AND is not listed in
+#                         project/known-missing-libs.txt fails the job, and an
+#                         allowlist entry whose file now exists fails too (so the
+#                         list cannot rot). It also re-reads every committed
+#                         prebuilt with tools/lib_arch.py, because an archive built
+#                         for the wrong CPU links often enough to be shipped and
+#                         only faults once it is on a device.
+#   workflow_dispatch   : the gate plus the real builds. Kept manual on purpose:
+#                         cross-building LuaJIT is toolchain-sensitive and must not
+#                         turn every push red while it is being tuned.
+#
+# Every build job drives the same entry point, tools/build_luajit.sh (or its MSVC
+# sibling on Windows), which writes straight to the path Build.xml links and then
+# refuses to report success unless the artifact really carries the target CPU.
+#
+# The two selections that are genuinely missing today are
+#   project/luajit/lib/Windows/lua51-x86.lib   (target windows-x86)
+#   project/luajit/lib/MinGW/libluajit-x86.a   (target mingw-x86)
+# and both are in the dispatch matrix below.
+
+name: Prebuilt LuaJIT
+
+on:
+  push:
+    paths:
+      - "project/**"
+      - "tools/**"
+      - ".github/workflows/prebuilt-luajit.yml"
+  pull_request:
+    paths:
+      - "project/**"
+      - "tools/**"
+      - ".github/workflows/prebuilt-luajit.yml"
+  workflow_dispatch:
+    inputs:
+      libref:
+        description: "LuaJIT git ref to build"
+        required: false
+        default: "97813fb924edf822455f91a5fbbdfdb349e5984f"
+      android_api:
+        description: "Android API level for the android-* targets"
+        required: false
+        default: "21"
+
+permissions:
+  contents: read
+
+env:
+  LUAJIT_REF: ${{ inputs.libref || '97813fb924edf822455f91a5fbbdfdb349e5984f' }}
+  ANDROID_API: ${{ inputs.android_api || '21' }}
+  NDK_VERSION: r21e
+
+jobs:
+  gate:
+    name: Prebuilt library gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every Build.xml selection must exist or be allowlisted
+        run: python3 tools/check_prebuilt_libs.py
+
+      - name: Every committed prebuilt must carry the CPU it claims
+        run: bash tools/build_luajit.sh --check --allow-missing
+
+      - name: Inventory
+        if: always()
+        run: python3 tools/check_prebuilt_libs.py --json --allow-missing
+
+  build-posix:
+    name: build ${{ matrix.target }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - mingw-x86
+          - mingw-x64
+          - linux-x86
+          - linux-x64
+          - linux-armv7
+          - linux-arm64
+          - android-armv7
+          - android-arm64
+          - android-x86
+          - android-x86_64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cross toolchains
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-multilib \
+            gcc-mingw-w64-i686 gcc-mingw-w64-x86-64 \
+            gcc-aarch64-linux-gnu gcc-arm-linux-gnueabihf
+
+      - name: Install Android NDK ${{ env.NDK_VERSION }}
+        if: startsWith(matrix.target, 'android-')
+        run: |
+          curl -sSLo ndk.zip "https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux-x86_64.zip"
+          unzip -q ndk.zip -d "$HOME"
+          echo "ANDROID_NDK_ROOT=$HOME/android-ndk-${NDK_VERSION}" >> "$GITHUB_ENV"
+
+      - name: Build and verify
+        run: bash tools/build_luajit.sh ${{ matrix.target }}
+
+      - name: Inventory after build
+        run: python3 tools/check_prebuilt_libs.py --allow-missing
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luajit-${{ matrix.target }}
+          path: |
+            project/luajit/lib
+            dist
+          if-no-files-found: error
+          retention-days: 30
+
+  build-apple:
+    name: build ${{ matrix.target }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: gate
+    runs-on: macos-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - macos-64
+          - ios-arm64
+          - ios-sim
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the Apple SDKs are usable
+        run: |
+          xcode-select -p
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
+
+      - name: Build and verify
+        run: bash tools/build_luajit.sh ${{ matrix.target }}
+
+      - name: Inventory after build
+        run: python3 tools/check_prebuilt_libs.py --allow-missing
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luajit-${{ matrix.target }}
+          path: |
+            project/luajit/lib
+            dist
+          if-no-files-found: error
+          retention-days: 30
+
+  build-msvc:
+    name: build windows-${{ matrix.arch }}
+    if: github.event_name == 'workflow_dispatch'
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86, x64]
+    steps:
+      - uses: actions/checkout@v4
+
+      # No vcvarsall call here: the batch file locates the toolset itself through
+      # vswhere, so it works on whatever edition the runner happens to ship.
+      - name: Build and verify
+        shell: cmd
+        run: tools\build_luajit_msvc.bat ${{ matrix.arch }}
+
+      - name: Inventory after build
+        run: python tools/check_prebuilt_libs.py --allow-missing
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luajit-windows-${{ matrix.arch }}
+          path: |
+            project/luajit/lib
+            dist
+          if-no-files-found: error
+          retention-days: 30
+
+  collect:
+    name: Collect prebuilts
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build-posix, build-apple, build-msvc]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: incoming
+
+      - name: Merge every artifact into the checkout
+        run: |
+          set -euo pipefail
+          for d in incoming/*/; do
+            if [ -d "$d/project/luajit/lib" ]; then cp -r "$d/project/luajit/lib/." project/luajit/lib/; fi
+            if [ -d "$d/dist" ]; then mkdir -p dist && cp -r "$d/dist/." dist/; fi
+          done
+          ls -lR project/luajit/lib | head -n 60
+
+      # Prunes any allowlist entry the build just satisfied, then checks. Without
+      # this the stale-entry rule would fail the one job that fixed the gap.
+      - name: The allowlist gate must be green
+        run: python3 tools/check_prebuilt_libs.py --prune-allowlist
+
+      - name: Every collected prebuilt must carry the CPU it claims
+        run: bash tools/build_luajit.sh --check --allow-missing
+
+      - name: What to commit
+        run: |
+          echo "Copy these files back into the haxelib and commit:"
+          git status --short project/luajit/lib
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: luajit-prebuilts
+          path: |
+            project/luajit/lib
+            dist
+          if-no-files-found: error
+          retention-days: 30

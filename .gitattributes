@@ -1,0 +1,16 @@
+# Line endings are load-bearing here: CI runs the build scripts on Linux, while the
+# MSVC entry point is a batch file whose goto/if blocks need CRLF.
+
+*.sh          text eol=lf
+*.py          text eol=lf
+*.yml         text eol=lf
+*.hx          text eol=lf
+*.md          text eol=lf
+*.txt         text eol=lf
+*.xml         text eol=lf
+
+*.bat         text eol=crlf
+
+# Prebuilt archives and anything else git cannot diff.
+*.a           binary
+*.lib         binary

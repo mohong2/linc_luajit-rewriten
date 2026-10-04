@@ -1,0 +1,23 @@
+# Prebuilt LuaJIT selections in project/Build.xml that intentionally have no file.
+#
+# tools/check_prebuilt_libs.py is strict: a selection that is missing AND is not
+# listed here fails the job, and an entry listed here whose file now exists also
+# fails, so this file cannot silently rot.
+#
+# Two kinds of entry live here:
+#   forever - the toolchain no longer exists, so no amount of CI can produce it
+#   pending - buildable by the dispatch matrix in
+#             .github/workflows/prebuilt-luajit.yml, just not built yet. The collect
+#             job prunes these automatically once the artifacts have been merged, so
+#             the file we commit never keeps a satisfied entry.
+#
+# Format: <substring of the lib path>    # kind - reason
+
+project/luajit/lib/MacOS/libluajit-32.a     # forever - no 32-bit macOS since 10.15; HXCPP_M32 never fires here
+project/luajit/lib/iPhone/libluajit-armv7.a # forever - iOS has been arm64-only since 11; Xcode ships no armv7 slice
+project/luajit/lib/iPhone/libluajit-x86.a   # forever - 32-bit iOS simulator dead since Xcode 10
+project/luajit/lib/Windows/lua51-armv7.lib  # forever - no ARM Windows hxcpp target in this project
+project/luajit/lib/Windows/lua51-arm64.lib  # forever - no ARM Windows hxcpp target in this project
+project/luajit/lib/MinGW/libluajit-armv7.a  # forever - no mingw ARM cross toolchain on any runner
+project/luajit/lib/MinGW/libluajit-arm64.a  # forever - no mingw ARM cross toolchain on any runner
+project/luajit/lib/MinGW/libluajit-x86.a    # pending - target mingw-x86 builds it; no i686-w64-mingw32 toolchain on the dev machine
