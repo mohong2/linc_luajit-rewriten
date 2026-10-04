@@ -20,4 +20,3 @@ project/luajit/lib/Windows/lua51-armv7.lib  # forever - no ARM Windows hxcpp tar
 project/luajit/lib/Windows/lua51-arm64.lib  # forever - no ARM Windows hxcpp target in this project
 project/luajit/lib/MinGW/libluajit-armv7.a  # forever - no mingw ARM cross toolchain on any runner
 project/luajit/lib/MinGW/libluajit-arm64.a  # forever - no mingw ARM cross toolchain on any runner
-project/luajit/lib/MinGW/libluajit-x86.a    # pending - target mingw-x86 builds it; no i686-w64-mingw32 toolchain on the dev machine
