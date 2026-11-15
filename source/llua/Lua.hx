@@ -385,6 +385,20 @@ class Lua_helper {
 	 * hscript LuaApi) reads/writes it directly.
 	 */
 	public static var callbacks:Map<String, Dynamic> = new Map();
+
+	/**
+	 * 上面那张 legacy 表里，每个名字当前是被哪个 state 写进去的。
+	 *
+	 * 不记这个就没法在 state 关闭时精确回收：callbacks 是静态的，add_callback 每次都
+	 * 往里塞闭包，脚本关了它也不会放手 —— 于是已关闭脚本的闭包（以及它捕获的整个
+	 * FunkinLua）被永久钉住。
+	 *
+	 * English: which state wrote each name into the legacy `callbacks` map, so a
+	 * closing state can take back exactly its own entries instead of pinning the
+	 * closed script's closures forever.
+	 */
+	static var callbackOwner:Map<String, Int> = new Map();
+
 	public static var sendErrorsToLua:Bool = true;
 
 	/** Registry key under which each state stores its own dispatch id. */
@@ -431,16 +445,35 @@ class Lua_helper {
 		return t != null && t.exists(fname);
 	}
 
-	/** Drop `l`'s dispatch table. Call this before closing a state. */
+	/**
+	 * 丢掉 `l` 的回调表。关 state 之前必须调用它。
+	 * English: Drop `l`'s dispatch table. Call this before closing a state.
+	 */
 	public static function forget_state(l:State):Void {
 		var id = stateId(l, false);
-		if (id != 0)
-			byState.remove(id);
+		if (id == 0)
+			return;
+
+		byState.remove(id);
+
+		// 顺手把 legacy 全局表里「值属于本 state」的名字也摘掉。只删登记过 owner 的，
+		// 所以不会误伤别的 state 或外部直接写进 callbacks 的条目。
+		// English: also drop legacy-global entries owned by this state; unregistered
+		// (externally written) entries are left alone.
+		var owned:Array<String> = [];
+		for (name => owner in callbackOwner)
+			if (owner == id)
+				owned.push(name);
+		for (name in owned) {
+			callbackOwner.remove(name);
+			callbacks.remove(name);
+		}
 	}
 
 	public static function add_callback(l:State, fname:String, f:Dynamic):Bool {
 		tableOf(l).set(fname, f);
 		callbacks.set(fname, f); // legacy view for external readers
+		callbackOwner.set(fname, stateId(l, false));
 		Lua.add_callback_function(l, fname);
 		return true;
 	}
@@ -450,6 +483,7 @@ class Lua_helper {
 		if (t != null)
 			t.remove(fname);
 		callbacks.remove(fname);
+		callbackOwner.remove(fname);
 		Lua.remove_callback_function(l, fname);
 		return true;
 	}

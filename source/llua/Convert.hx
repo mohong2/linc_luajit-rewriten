@@ -23,6 +23,13 @@ class Convert {
 			case Lua.LUA_TTABLE:
 				ret = toHaxeObj(l, v);
 			case Lua.LUA_TFUNCTION:
+				// luaL_ref 会弹掉栈顶，所以先压一份副本再取引用 —— fromLua 必须「进多少出多少」。
+				// 以前这里吃掉一个槽，导致每个调用点都得自己推导「这次到底弹没弹」，
+				// 推导错了就是永久性的栈漂移（top 越跑越低，最后写到栈数组前面去）。
+				// English: luaL_ref pops, so push a copy first. fromLua must be
+				// stack-neutral; otherwise every call site has to re-derive that rule,
+				// and any mistake becomes permanent stack drift.
+				Lua.pushvalue(l, v);
 				ret = new LuaCallback(l, LuaL.ref(l, Lua.LUA_REGISTRYINDEX));
 			/*case Lua.LUA_TUSERDATA:
 				case Lua.LUA_TLIGHTUSERDATA:
